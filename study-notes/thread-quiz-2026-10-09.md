@@ -19,6 +19,7 @@ progress: 5 / 10 (보충 문제 포함)
 | [[#Q4-2. 이해 확인\|Q4-2]] | Race condition | ✅ 정답 (설명 후 이해 완료) |
 | [[#Q5. Lock으로 race condition 막기\|Q5]] | Lock | ❌ 오답 |
 | [[#Q5-1. 이해 확인\|Q5-1]] | ready_list | ✅ 정답 |
+| [[#Q5-2. Lock은 왜 `holder`를 기록하나?\|Q5-2]] | Lock vs 세마포어 | 🔺 부분 정답 |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -35,6 +36,7 @@ progress: 5 / 10 (보충 문제 포함)
 - [ ] lock이 잡혀 있을 때 `lock_acquire()`한 스레드는 **RUNNING → BLOCKED**, `lock_release()`로 깨어나면 **BLOCKED → READY** → [[#Q5. Lock으로 race condition 막기|Q5]]
 - [ ] 인터럽트로 멈춘 스레드는 "멈춤"이 아니라 **READY** → [[#Q5. Lock으로 race condition 막기|Q5]]
 - [ ] **Lock은 인터럽트를 막지 않는다.** 다른 스레드가 중간 값을 베끼는 걸 막는다 → 결과 12 → [[#Q5. Lock으로 race condition 막기|Q5]]
+- [ ] `holder`가 없으면 남이 열쇠를 반납해서 **두 스레드가 동시에 임계 구역에 들어가고 race condition이 다시 생긴다** → [[#Q5-2. Lock은 왜 `holder`를 기록하나?|Q5-2]]
 
 ### ✅ 맞은 것
 - 코드, 데이터는 공유 / 스택, 레지스터는 따로
@@ -43,6 +45,7 @@ progress: 5 / 10 (보충 문제 포함)
 - `sema_up()`으로 깨어나면 BLOCKED → READY
 - 중간에 끼어들면 더하기 하나가 사라진다 (10 → 11, 원래 12) — Q4-2
 - 스케줄러는 `ready_list`에서만 고른다. BLOCKED 스레드는 선택되지 않는다 — Q5-1
+- `holder`가 없으면 누구든 lock을 release할 수 있다 — Q5-2
 
 ---
 
@@ -382,10 +385,50 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 > | READY | `ready_list` | 스케줄러 |
 > | BLOCKED | `sema->waiters` (또는 sleep list 등) | `sema_up()` → `thread_unblock()` |
 
+### Q5-2. Lock은 왜 `holder`를 기록하나?
+
+> [!question] 문제
+> `struct lock`은 value 1인 세마포어 + `holder`(주인). 왜 굳이 `holder`를 기록할까? (A가 열쇠를 가졌는데 B가 `lock_release()`를 부르면?)
+
+> [!quote] 내 답
+> holder가 없으면 누구든 호출할 수 있다. 그러면 기록이 없거나, 무한 반복되거나, 높은 값을 가진 스레드가 CPU를 독점하는 문제가 생길 것 같다.
+
+> [!failure] 결과: 🔺 부분 정답
+> - ✅ "holder가 없으면 **누구든** release할 수 있다"는 정확하다.
+> - ❌ 그 결과로 생기는 문제를 짚지 못했다. 진짜 문제는 **lock이 쓸모없어져서 race condition이 다시 생기는 것**이다.
+
+> [!success] 정답
+> **열쇠를 가진 스레드만 반납할 수 있게 하려고.** 주인이 아닌 스레드가 열쇠를 반납하면, A가 아직 칠판 작업 중인데 다른 스레드가 들어온다.
+
+| 순서 | A | B | C | 🔑 주인 | 칠판 |
+|---|---|---|---|---|---|
+| A 열쇠 받음 🔒, ① 베끼기 (10) | RUNNING | | | A | 10 |
+| ⏰ 인터럽트 → B 실행 | READY | RUNNING | | A | 10 |
+| B가 **남의 열쇠를 반납** 🔓 (holder 없으면 가능!) | READY | RUNNING | | **없음** | 10 |
+| C가 열쇠 받음 🔒, ①②③ (10 → 11) | READY | | RUNNING | C | **11** |
+| A 다시 실행, ②③ (메모장 10 + 1) | RUNNING | | | C?! | **11** ❌ |
+
+→ A와 C가 **동시에** 임계 구역 안에 있었다. 두 번 더했는데 12가 아니라 11. **Q4의 lost update가 그대로 돌아온다.**
+
+> [!example] Pintos 코드 (`threads/synch.c`)
+> - `lock_release()`: `ASSERT (lock_held_by_current_thread (lock));` → 주인이 아니면 **커널 패닉**
+> - `lock_acquire()`: `ASSERT (!lock_held_by_current_thread (lock));` → 이미 가진 열쇠를 또 달라고 하면 패닉 (자기 자신을 영원히 기다리는 것 방지)
+> - `lock_held_by_current_thread()`: `return lock->holder == thread_current ();`
+
+> [!tip] 세마포어 vs Lock
+> | | 세마포어 | Lock |
+> |---|---|---|
+> | 열쇠 개수 | `value`개 (0 이상 아무 수) | 1개 |
+> | 주인 | 없음. **누구든** up/down 가능 | `holder`. **잡은 스레드만** release |
+> | 주 용도 | 신호 보내기, 개수 세기 (예: A가 끝나면 B에게 알림) | 임계 구역 보호 |
+
+> [!note] 내 답의 세 번째 추측에 대해
+> "높은 우선순위 스레드가 CPU를 독점"은 이 문제의 답은 아니지만, **`holder`가 필요한 두 번째 이유**와 연결된다. Priority donation(Q9)에서 "누구에게 우선순위를 빌려줄지" 알려면 **열쇠 주인(`holder`)**을 알아야 한다.
+
 ---
 
 ## 📝 아직 안 푼 문제
-- [ ] Q5-2. Semaphore vs Lock vs Condition Variable
+- [ ] Q5-3. Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
 - [ ] Q7. Alarm Clock: busy waiting 문제와 sleep list
 - [ ] Q8. 인터럽트 핸들러에서 잠들면 안 되는 이유
