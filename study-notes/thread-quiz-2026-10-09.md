@@ -24,6 +24,8 @@ progress: 5 / 10 (보충 문제 포함)
 | [[#Q5-4. 신호를 먼저 보내면?\|Q5-4]] | 세마포어 신호 | 🔺 절반 정답 |
 | [[#Q5-6. 상태 판단 스피드 퀴즈\|Q5-6]] | 상태 판단 | ✅ 4개 모두 정답 |
 | [[#Q7. Alarm Clock (busy waiting)\|Q7]] | Alarm Clock | 🔺 부분 정답 |
+| [[#Q7-2. Alarm Clock 고치기: 누가 깨우고, 시각은 어디에 저장?\|Q7-2]] | Alarm Clock | 🔺 절반 정답 |
+| [[#Q7-3. 새 `timer_sleep` 흐름 빈칸 채우기\|Q7-3]] | Alarm Clock | 🔺 3/6 (상태 전이는 정답) |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -46,6 +48,8 @@ progress: 5 / 10 (보충 문제 포함)
 - [ ] 열쇠가 있으면 `sema_down`은 **기다리지 않고 통과** → RUNNING 그대로. DYING은 `thread_exit()`일 때만 (DYING이라고 답함) → [[#Q5-4. 신호를 먼저 보내면?|Q5-4]]
 - [ ] 스케줄러가 READY 스레드를 고르면 **RUNNING**이 된다 (READY가 된다고 답함) → [[#Q7. Alarm Clock (busy waiting)|Q7]]
 - [ ] busy waiting의 근본 원인: 시간을 **기다리는** 스레드가 BLOCKED가 아니라 **READY**에 있다 → [[#Q7. Alarm Clock (busy waiting)|Q7]]
+- [ ] 잠든 스레드가 깨어날 시각은 `elem`이 아니라 **`wakeup_tick` 필드**에 저장, 잠든 스레드는 **`sleep_list`**에 → [[#Q7-2. Alarm Clock 고치기: 누가 깨우고, 시각은 어디에 저장?|Q7-2]]
+- [ ] 직접 쓰는 함수는 **`thread_block()` / `thread_unblock()`** (`sema_down`/`sema_up` 아님), 깨우는 조건은 **`wakeup_tick <= ticks`** → [[#Q7-3. 새 `timer_sleep` 흐름 빈칸 채우기|Q7-3]]
 - [ ] 신호 보내기에 lock을 못 쓰는 이유: **down/up 스레드가 다름 + lock은 열린 채로 시작** → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
 
 ### ✅ 맞은 것
@@ -59,6 +63,8 @@ progress: 5 / 10 (보충 문제 포함)
 - B가 먼저 `sema_up` 하면 value는 1 — Q5-4
 - 상태 판단 스피드 퀴즈 4문제 전부 — Q5-6
 - `thread_yield()`는 RUNNING → READY — Q7
+- 타이머 인터럽트가 `sleep_list`의 스레드를 깨운다 — Q7-2
+- 잠들기 BLOCKED, 깨어나기 BLOCKED → READY 상태 전이 — Q7-3
 
 ---
 
@@ -541,10 +547,54 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 
 ---
 
+### Q7-2. Alarm Clock 고치기: 누가 깨우고, 시각은 어디에 저장?
+
+> [!quote] 내 답
+> a: 타이머 인터럽트 / b: elem?
+
+> [!success] 결과: (a) ✅, (b) 🔺 절반
+> - (a) **타이머 인터럽트**가 10ms마다 `sleep_list`를 확인하고 깨울 스레드를 깨운다.
+> - (b) `elem`은 리스트에 끼우는 **고리(위치)**일 뿐 시각을 담지 못한다. 필요한 것:
+>   1. `struct thread`에 **`int64_t wakeup_tick;`** 필드 추가 ("이 tick이 되면 깨워 줘")
+>   2. BLOCKED 스레드를 모아 둘 **`sleep_list`** 추가 (`ready_list`는 있지만 잠든 스레드용은 없음)
+> - `elem`은 한 번에 한 리스트에만 끼워진다. 잠든 S는 `ready_list`에서 빠지고 `sleep_list`로 간다.
+
+### Q7-3. 새 `timer_sleep` 흐름 빈칸 채우기
+
+```
+timer_sleep(100):
+  1. 지금 tick = 500이라면, wakeup_tick = 600
+  2. S를 sleep_list에 넣는다
+  3. S의 상태: RUNNING → BLOCKED   (thread_block())
+
+timer_interrupt() (10ms마다):
+  4. ticks++
+  5. sleep_list를 보며, wakeup_tick <= ticks 인 스레드를 찾는다
+  6. 찾으면 S의 상태: BLOCKED → READY   (thread_unblock())
+```
+
+| | 내 답 | 정답 | |
+|---|---|---|---|
+| 1 | 타이머 인터럽트 | **600** (500 + 100) | ❌ |
+| 2 | Running | **sleep_list** | ❌ |
+| 3 | Blocked (sema_down) | BLOCKED, **`thread_block()`** | 🔺 상태 ✅ 함수 ❌ |
+| 5 | (답 없음, 6번 답과 섞임) | **`wakeup_tick <= ticks`** | ❌ |
+| 6 | Blocked → Ready (sema_up) | BLOCKED → READY, **`thread_unblock()`** | 🔺 상태 ✅ 함수 ❌ |
+
+> [!warning] 함수 이름
+> `sema_down` 안에서 `thread_block()`을, `sema_up` 안에서 `thread_unblock()`을 부른다. 내가 낸 힌트가 "안에 나왔다"였는데 바깥 함수를 답했다. Alarm Clock에서는 세마포어 없이 **`thread_block()` / `thread_unblock()`을 직접** 쓴다.
+> 상태 전이(BLOCKED, BLOCKED → READY)는 정확히 맞혔다. 약점이 극복된 부분.
+
+> [!tip] 기억법
+> `timer_sleep`: **시각 계산 → 줄 세우기(sleep_list) → 잠들기(thread_block)**
+> `timer_interrupt`: **시계 올리기 → 깨울 사람 찾기 → 깨우기(thread_unblock)**
+
+---
+
 ## 📝 아직 안 푼 문제
 - [ ] Q5-5. Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
-- [ ] Q7-2. Alarm Clock 고치기: S를 BLOCKED로 만들고 누가 깨우나?
+- [ ] Q7-4. 인터럽트 핸들러에서 `sleep_list` 보호 (= Q8)
 - [ ] Q8. 인터럽트 핸들러에서 잠들면 안 되는 이유
 - [ ] Q9. Priority inversion과 priority donation
 - [ ] Q10. Nested donation에 필요한 `struct thread` 필드
