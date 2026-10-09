@@ -20,6 +20,7 @@ progress: 5 / 10 (보충 문제 포함)
 | [[#Q5. Lock으로 race condition 막기\|Q5]] | Lock | ❌ 오답 |
 | [[#Q5-1. 이해 확인\|Q5-1]] | ready_list | ✅ 정답 |
 | [[#Q5-2. Lock은 왜 `holder`를 기록하나?\|Q5-2]] | Lock vs 세마포어 | 🔺 부분 정답 |
+| [[#Q5-3. 세마포어로 신호 보내기\|Q5-3]] | 세마포어 신호 | ❌ 오답 |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -37,6 +38,9 @@ progress: 5 / 10 (보충 문제 포함)
 - [ ] 인터럽트로 멈춘 스레드는 "멈춤"이 아니라 **READY** → [[#Q5. Lock으로 race condition 막기|Q5]]
 - [ ] **Lock은 인터럽트를 막지 않는다.** 다른 스레드가 중간 값을 베끼는 걸 막는다 → 결과 12 → [[#Q5. Lock으로 race condition 막기|Q5]]
 - [ ] `holder`가 없으면 남이 열쇠를 반납해서 **두 스레드가 동시에 임계 구역에 들어가고 race condition이 다시 생긴다** → [[#Q5-2. Lock은 왜 `holder`를 기록하나?|Q5-2]]
+- [ ] value 0인 세마포어에 `sema_down` → **RUNNING → BLOCKED** (타이머 인터럽트 → READY라고 답함) → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
+- [ ] `sema_up`으로 깨어나면 **BLOCKED → READY** (READY → RUNNING이라고 답함) → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
+- [ ] 신호 보내기에 lock을 못 쓰는 이유: **down/up 스레드가 다름 + lock은 열린 채로 시작** → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
 
 ### ✅ 맞은 것
 - 코드, 데이터는 공유 / 스택, 레지스터는 따로
@@ -425,10 +429,47 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 > [!note] 내 답의 세 번째 추측에 대해
 > "높은 우선순위 스레드가 CPU를 독점"은 이 문제의 답은 아니지만, **`holder`가 필요한 두 번째 이유**와 연결된다. Priority donation(Q9)에서 "누구에게 우선순위를 빌려줄지" 알려면 **열쇠 주인(`holder`)**을 알아야 한다.
 
+### Q5-3. 세마포어로 신호 보내기
+
+> [!question] 문제
+> `sema_init(&done, 0)`. A: `sema_down(&done)` ⓐ 후 결과 사용. B: 파일 읽고 `sema_up(&done)` ⓑ.
+> (a) A가 먼저 ⓐ에 도착하면? (b) 나중에 B가 ⓑ를 하면 A는? (c) 왜 lock으로 바꿀 수 없나?
+
+> [!quote] 내 답
+> a: 타이머 인터럽트 상태가 되어 READY / b: READY → RUNNING / c: lock은 yield하는 게 아니라서?
+
+> [!failure] 결과: ❌ 오답 (3개 모두)
+> **Q3 (b)(c)에서는 맞혔던 내용이다.** 코드 모양이 바뀌자 "기다림 = BLOCKED"를 연결하지 못했다.
+
+> [!success] 정답
+> - (a) **RUNNING → BLOCKED**. value가 0이라 꺼낼 열쇠가 없다. `sema_down()`의 `while (sema->value == 0) { ...; thread_block(); }`에 걸린다. 타이머 인터럽트와는 상관없다. A가 **스스로** 잠든다.
+> - (b) **BLOCKED → READY**. `sema_up()`이 value를 1로 만들고 `thread_unblock(A)` → A는 `ready_list`로. **바로 RUNNING이 되지 않는다.** 스케줄러가 고를 때 RUNNING이 된다.
+> - (c) 두 가지 이유:
+>   1. **down 하는 스레드(A)와 up 하는 스레드(B)가 다르다.** lock은 잡은 스레드만 release 가능 → B가 `lock_release()` 하면 `ASSERT` 실패 (Q5-2).
+>   2. lock은 **열린 상태(value 1)로 시작**한다. A가 `lock_acquire()` 하면 기다리지 않고 바로 통과해 버린다. "B가 끝날 때까지 기다리기"가 안 된다.
+
+| | lock | 세마포어 (value 0 시작) |
+|---|---|---|
+| 처음 상태 | 열림 (바로 통과) | 닫힘 (누가 up 해 줄 때까지 대기) |
+| 잠그는/기다리는 스레드 | A | A |
+| 푸는/신호 주는 스레드 | **A 자신만** | **B (다른 스레드)** ✅ |
+| 비유 | 화장실 열쇠 | 택배 도착 알림 |
+
+> [!warning] 반복되는 약점: 상태 판단
+> 상태를 물으면 "타이머 인터럽트"를 먼저 떠올리는 경향이 있다. 아래 순서로 판단하자.
+> 1. 이 스레드가 **지금 코드를 실행 중**인가? → **RUNNING**
+> 2. 할 일이 있고 **CPU만 받으면** 바로 실행 가능한가? → **READY**
+> 3. **무언가(열쇠, 신호, 시간)를 기다리는** 중인가? → **BLOCKED**
+>
+> - 타이머 인터럽트는 **RUNNING → READY** 한 가지만 만든다.
+> - `sema_down`/`lock_acquire`에서 못 들어가면 **스스로** BLOCKED.
+> - 깨어나면(`sema_up`, `lock_release`) **항상 READY 먼저.** BLOCKED → RUNNING 직행은 없다.
+
 ---
 
 ## 📝 아직 안 푼 문제
-- [ ] Q5-3. Condition Variable
+- [ ] Q5-4. 세마포어 신호를 먼저 보내면? (B가 먼저 up)
+- [ ] Q5-5. Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
 - [ ] Q7. Alarm Clock: busy waiting 문제와 sleep list
 - [ ] Q8. 인터럽트 핸들러에서 잠들면 안 되는 이유
