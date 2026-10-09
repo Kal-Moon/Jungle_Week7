@@ -18,6 +18,7 @@ progress: 5 / 10 (보충 문제 포함)
 | [[#Q4-1. 한 번씩만 더하면?\|Q4-1]] | Race condition | 🔺 절반 정답 |
 | [[#Q4-2. 이해 확인\|Q4-2]] | Race condition | ✅ 정답 (설명 후 이해 완료) |
 | [[#Q5. Lock으로 race condition 막기\|Q5]] | Lock | ❌ 오답 |
+| [[#Q5-1. 이해 확인\|Q5-1]] | ready_list | ✅ 정답 |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -41,6 +42,7 @@ progress: 5 / 10 (보충 문제 포함)
 - `sema_down()`에서 기다리면 RUNNING → BLOCKED
 - `sema_up()`으로 깨어나면 BLOCKED → READY
 - 중간에 끼어들면 더하기 하나가 사라진다 (10 → 11, 원래 12) — Q4-2
+- 스케줄러는 `ready_list`에서만 고른다. BLOCKED 스레드는 선택되지 않는다 — Q5-1
 
 ---
 
@@ -362,10 +364,27 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 > - `lock_acquire()` → `sema_down(&lock->semaphore)` → `while (sema->value == 0) { waiters에 넣기; thread_block(); }` → **RUNNING → BLOCKED**
 > - `lock_release()` → `lock->holder = NULL; sema_up(&lock->semaphore)` → `thread_unblock(waiters 맨 앞)` → **BLOCKED → READY**
 
+### Q5-1. 이해 확인
+
+> [!question] 문제
+> A: READY (열쇠 보유), B: BLOCKED (열쇠 대기). 스케줄러는 누구를 고르나?
+
+> [!quote] 내 답
+> A. ready_list에 있는 건 A니까
+
+> [!success] 결과: ✅ 정답
+> 스케줄러(`next_thread_to_run()`)는 **`ready_list`에서만** 고른다. B는 `ready_list`가 아니라 **lock 안 세마포어의 `waiters` 리스트**에 들어가 있다.
+> B는 `ready_list`에 "아직" 없는 게 아니라, `lock_release()`가 `thread_unblock()`으로 옮겨 줄 때까지 **절대** 들어가지 못한다.
+
+> [!tip] 리스트 두 개로 기억하기
+> | 상태 | 들어가 있는 리스트 | 꺼내 주는 것 |
+> |---|---|---|
+> | READY | `ready_list` | 스케줄러 |
+> | BLOCKED | `sema->waiters` (또는 sleep list 등) | `sema_up()` → `thread_unblock()` |
+
 ---
 
 ## 📝 아직 안 푼 문제
-- [ ] Q5-1. B가 BLOCKED인 동안 A가 또 타이머 인터럽트를 받으면 누가 실행되나?
 - [ ] Q5-2. Semaphore vs Lock vs Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
 - [ ] Q7. Alarm Clock: busy waiting 문제와 sleep list
