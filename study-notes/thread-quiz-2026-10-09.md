@@ -22,6 +22,7 @@ progress: 5 / 10 (보충 문제 포함)
 | [[#Q5-2. Lock은 왜 `holder`를 기록하나?\|Q5-2]] | Lock vs 세마포어 | 🔺 부분 정답 |
 | [[#Q5-3. 세마포어로 신호 보내기\|Q5-3]] | 세마포어 신호 | ❌ 오답 |
 | [[#Q5-4. 신호를 먼저 보내면?\|Q5-4]] | 세마포어 신호 | 🔺 절반 정답 |
+| [[#Q5-6. 상태 판단 스피드 퀴즈\|Q5-6]] | 상태 판단 | ✅ 4개 모두 정답 |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -53,6 +54,7 @@ progress: 5 / 10 (보충 문제 포함)
 - 스케줄러는 `ready_list`에서만 고른다. BLOCKED 스레드는 선택되지 않는다 — Q5-1
 - `holder`가 없으면 누구든 lock을 release할 수 있다 — Q5-2
 - B가 먼저 `sema_up` 하면 value는 1 — Q5-4
+- 상태 판단 스피드 퀴즈 4문제 전부 — Q5-6
 
 ---
 
@@ -494,10 +496,21 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 > | B 먼저 up → A가 down (Q5-4) | 0 → **1** → 0 | **RUNNING 그대로** |
 > 어느 순서든 **A는 B가 끝난 뒤에 `use_result()`를 실행한다.** 먼저 온 신호는 value에 저장되어 있다가 나중에 온 A가 꺼내 간다.
 
+### Q5-6. 상태 판단 스피드 퀴즈
+
+| | 상황 | 내 답 | 정답 | |
+|---|---|---|---|---|
+| 1 | C가 `lock_acquire()`, 아무도 lock 없음 | RUNNING | RUNNING 그대로 (바로 통과) | ✅ |
+| 2 | D가 `lock_acquire()`, E가 lock 보유 | BLOCKED | RUNNING → BLOCKED | ✅ |
+| 3 | F 계산 중, time slice 종료 | READY | RUNNING → READY | ✅ |
+| 4 | G가 `thread_exit()` | DYING | RUNNING → DYING | ✅ |
+
+> [!success] 결과: ✅ 4개 모두 정답
+> 판단 순서(실행 중? → CPU만 있으면 됨? → 기다림?)를 적용하자 전부 맞혔다. Q3, Q5-3에서 틀린 상태 판단을 극복!
+
 ---
 
 ## 📝 아직 안 푼 문제
-- [ ] Q5-6. 상태 판단 연습 (스피드 퀴즈)
 - [ ] Q5-5. Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
 - [ ] Q7. Alarm Clock: busy waiting 문제와 sleep list
