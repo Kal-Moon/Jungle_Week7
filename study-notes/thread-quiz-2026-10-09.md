@@ -23,6 +23,7 @@ progress: 5 / 10 (보충 문제 포함)
 | [[#Q5-3. 세마포어로 신호 보내기\|Q5-3]] | 세마포어 신호 | ❌ 오답 |
 | [[#Q5-4. 신호를 먼저 보내면?\|Q5-4]] | 세마포어 신호 | 🔺 절반 정답 |
 | [[#Q5-6. 상태 판단 스피드 퀴즈\|Q5-6]] | 상태 판단 | ✅ 4개 모두 정답 |
+| [[#Q7. Alarm Clock (busy waiting)\|Q7]] | Alarm Clock | 🔺 부분 정답 |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -43,6 +44,8 @@ progress: 5 / 10 (보충 문제 포함)
 - [ ] value 0인 세마포어에 `sema_down` → **RUNNING → BLOCKED** (타이머 인터럽트 → READY라고 답함) → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
 - [ ] `sema_up`으로 깨어나면 **BLOCKED → READY** (READY → RUNNING이라고 답함) → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
 - [ ] 열쇠가 있으면 `sema_down`은 **기다리지 않고 통과** → RUNNING 그대로. DYING은 `thread_exit()`일 때만 (DYING이라고 답함) → [[#Q5-4. 신호를 먼저 보내면?|Q5-4]]
+- [ ] 스케줄러가 READY 스레드를 고르면 **RUNNING**이 된다 (READY가 된다고 답함) → [[#Q7. Alarm Clock (busy waiting)|Q7]]
+- [ ] busy waiting의 근본 원인: 시간을 **기다리는** 스레드가 BLOCKED가 아니라 **READY**에 있다 → [[#Q7. Alarm Clock (busy waiting)|Q7]]
 - [ ] 신호 보내기에 lock을 못 쓰는 이유: **down/up 스레드가 다름 + lock은 열린 채로 시작** → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
 
 ### ✅ 맞은 것
@@ -55,6 +58,7 @@ progress: 5 / 10 (보충 문제 포함)
 - `holder`가 없으면 누구든 lock을 release할 수 있다 — Q5-2
 - B가 먼저 `sema_up` 하면 value는 1 — Q5-4
 - 상태 판단 스피드 퀴즈 4문제 전부 — Q5-6
+- `thread_yield()`는 RUNNING → READY — Q7
 
 ---
 
@@ -510,10 +514,37 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 
 ---
 
+## Q7. Alarm Clock (busy waiting)
+
+> [!question] 문제
+> `timer_sleep(ticks)` 현재 구현:
+> ```c
+> int64_t start = timer_ticks ();
+> while (timer_elapsed (start) < ticks)
+>     thread_yield ();
+> ```
+> S가 `timer_sleep(100)`(1초) 호출. (a) `thread_yield()` 후 S의 상태는? (b) 스케줄러가 S를 다시 고를 수 있나? 고르면 S는 뭘 하나? (c) 1초 동안 반복되면 무엇이 문제인가?
+
+> [!quote] 내 답
+> a: RUNNING → READY / b: 고를 수 있고, 고르면 READY가 된다 / c: S만 다른 스레드보다 더 많이 사용되는 문제
+
+> [!failure] 결과: 🔺 부분 정답 ((a) ✅, (b) 🔺, (c) 🔺)
+
+> [!success] 정답
+> - (a) **RUNNING → READY** ✅
+> - (b) 고를 수 있다 ✅. 고르면 **RUNNING**이 된다 (READY가 아님). 그리고 S가 하는 일은 **"시간 됐나?" 확인 → 아직 → 다시 `thread_yield()`** 뿐이다.
+> - (c) 방향은 맞다 (CPU 낭비). 정확히는 **busy waiting(바쁜 대기)**: 할 일이 없는 S가 1초 동안 계속 CPU를 받아서 **확인만 하고 양보**하기를 반복한다. 그 시간과 컨텍스트 스위치 비용이 다른 스레드가 쓸 수 있었던 CPU다. S만 있으면 CPU가 1초 동안 헛돈다.
+
+> [!warning] 근본 원인: 상태가 틀렸다
+> S는 1초 동안 **시간이 지나기를 기다리는** 중이다 → 판단 순서 ③ → **BLOCKED**여야 한다.
+> 그런데 `thread_yield()`는 S를 **READY**로 만든다. READY = "CPU만 주면 할 일이 있다"는 뜻인데 S는 할 일이 없다. 그래서 스케줄러가 쓸데없이 S를 계속 고른다.
+
+---
+
 ## 📝 아직 안 푼 문제
 - [ ] Q5-5. Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
-- [ ] Q7. Alarm Clock: busy waiting 문제와 sleep list
+- [ ] Q7-2. Alarm Clock 고치기: S를 BLOCKED로 만들고 누가 깨우나?
 - [ ] Q8. 인터럽트 핸들러에서 잠들면 안 되는 이유
 - [ ] Q9. Priority inversion과 priority donation
 - [ ] Q10. Nested donation에 필요한 `struct thread` 필드
