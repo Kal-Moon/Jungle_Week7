@@ -2,7 +2,7 @@
 date: 2026-10-09
 tags: [pintos, thread, os, quiz, 복습]
 topic: 스레드 개념 퀴즈
-progress: 4 / 10 (Q4 보충 문제 포함)
+progress: 5 / 10 (보충 문제 포함)
 ---
 
 # 🧵 스레드 개념 퀴즈 (2026-10-09)
@@ -17,6 +17,7 @@ progress: 4 / 10 (Q4 보충 문제 포함)
 | [[#Q4. Race condition (`count++`)\|Q4]] | Race condition | ❌ 오답 |
 | [[#Q4-1. 한 번씩만 더하면?\|Q4-1]] | Race condition | 🔺 절반 정답 |
 | [[#Q4-2. 이해 확인\|Q4-2]] | Race condition | ✅ 정답 (설명 후 이해 완료) |
+| [[#Q5. Lock으로 race condition 막기\|Q5]] | Lock | ❌ 오답 |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -30,6 +31,9 @@ progress: 4 / 10 (Q4 보충 문제 포함)
 - [ ] **전역 변수 `count`는 공유**된다. 스레드마다 1000씩 따로 세는 게 아니다 → [[#Q4. Race condition (`count++`)|Q4]]
 - [ ] **`count++`는 CPU에서 읽기 → 더하기 → 쓰기 세 단계**이고, 그 사이에 인터럽트가 끼면 값이 사라진다 (lost update) → [[#Q4. Race condition (`count++`)|Q4]]
 - [ ] 한 번씩 더하면 결과는 **1 또는 2**. 0은 불가능하다 (0과 1이라고 답함) → [[#Q4-1. 한 번씩만 더하면?|Q4-1]]
+- [ ] lock이 잡혀 있을 때 `lock_acquire()`한 스레드는 **RUNNING → BLOCKED**, `lock_release()`로 깨어나면 **BLOCKED → READY** → [[#Q5. Lock으로 race condition 막기|Q5]]
+- [ ] 인터럽트로 멈춘 스레드는 "멈춤"이 아니라 **READY** → [[#Q5. Lock으로 race condition 막기|Q5]]
+- [ ] **Lock은 인터럽트를 막지 않는다.** 다른 스레드가 중간 값을 베끼는 걸 막는다 → 결과 12 → [[#Q5. Lock으로 race condition 막기|Q5]]
 
 ### ✅ 맞은 것
 - 코드, 데이터는 공유 / 스택, 레지스터는 따로
@@ -315,8 +319,54 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 
 ---
 
+## Q5. Lock으로 race condition 막기
+
+> [!question] 문제
+> `lock_acquire(&count_lock); count++; lock_release(&count_lock);`, `count = 10`.
+> A가 lock을 잡고 ①(베끼기)까지 하고 타이머 인터럽트로 멈춤 → B가 `lock_acquire()` 호출.
+> (a) B의 상태 변화는? (b) A가 ②③ 후 `lock_release()` 하면 B는? (c) 최종 `count`는?
+
+> [!quote] 내 답
+> a: ready → running을 하다가, 원래 running → ready로 타이머 인터럽트를 통해 바뀌어야 하는데, A 스레드가 멈춘 상태가 되었다
+> b: 11 / c: 11
+
+> [!failure] 결과: ❌ 오답 (3개 모두)
+> - (a)는 B가 아니라 A에 대한 설명이 섞였다. 그리고 인터럽트로 멈춘 A는 "멈춤"이 아니라 **READY**다 (Q3-d).
+> - (b)는 상태를 묻는 문제인데 숫자로 답했다.
+> - (c) lock이 있으면 더하기가 사라지지 않으므로 **12**다.
+
+> [!success] 정답
+> - (a) B: **RUNNING → BLOCKED**. 열쇠(lock)를 A가 갖고 있어서 들어갈 수 없다. CPU를 줘도 실행할 수 없으니 BLOCKED.
+> - (b) B: **BLOCKED → READY**. `lock_release()`가 기다리던 B를 깨운다. 깨어나면 RUNNING이 아니라 READY (Q3-c).
+> - (c) **12**
+
+| 순서 | A 상태 | B 상태 | 열쇠 주인 | A 메모장 | B 메모장 | 칠판 |
+|---|---|---|---|---|---|---|
+| A: `lock_acquire()` 🔒 | RUNNING | READY | **A** | | | 10 |
+| A: ① 베끼기 | RUNNING | READY | A | 10 | | 10 |
+| ⏰ 인터럽트 | **READY** | **RUNNING** | A | 10 (보관) | | 10 |
+| B: `lock_acquire()` → 열쇠 없음! | READY | **BLOCKED** 💤 | A | 10 | | 10 |
+| 실행 가능한 건 A뿐 → A 실행 | **RUNNING** | BLOCKED | A | 10 | | 10 |
+| A: ② +1, ③ 덮어쓰기 | RUNNING | BLOCKED | A | 11 | | **11** |
+| A: `lock_release()` 🔓 → B 깨움 | RUNNING | **READY** | 없음 | | | 11 |
+| B 실행, `lock_acquire()` 🔒 | | RUNNING | **B** | | | 11 |
+| B: ① 베끼기 (**11**을 베낌!) | | RUNNING | B | | 11 | 11 |
+| B: ② +1, ③ 덮어쓰기, 🔓 | | RUNNING | 없음 | | 12 | **12** ✅ |
+
+> [!tip] 핵심
+> - **Lock은 인터럽트를 막지 않는다.** A는 여전히 중간에 멈출 수 있다.
+> - Lock이 막는 건 **B가 칠판을 베끼는 것**이다. B는 A가 다 쓴 **뒤에야** 베끼므로 최신 값(11)을 가져간다.
+> - 즉 ①②③이 **다른 스레드 입장에서는 한 덩어리**처럼 보이게 만든다.
+
+> [!example] Pintos 코드 (`threads/synch.c`)
+> - `lock_acquire()` → `sema_down(&lock->semaphore)` → `while (sema->value == 0) { waiters에 넣기; thread_block(); }` → **RUNNING → BLOCKED**
+> - `lock_release()` → `lock->holder = NULL; sema_up(&lock->semaphore)` → `thread_unblock(waiters 맨 앞)` → **BLOCKED → READY**
+
+---
+
 ## 📝 아직 안 푼 문제
-- [ ] Q5. Semaphore vs Lock vs Condition Variable
+- [ ] Q5-1. B가 BLOCKED인 동안 A가 또 타이머 인터럽트를 받으면 누가 실행되나?
+- [ ] Q5-2. Semaphore vs Lock vs Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
 - [ ] Q7. Alarm Clock: busy waiting 문제와 sleep list
 - [ ] Q8. 인터럽트 핸들러에서 잠들면 안 되는 이유
