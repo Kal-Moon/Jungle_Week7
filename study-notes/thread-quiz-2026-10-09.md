@@ -21,6 +21,7 @@ progress: 5 / 10 (보충 문제 포함)
 | [[#Q5-1. 이해 확인\|Q5-1]] | ready_list | ✅ 정답 |
 | [[#Q5-2. Lock은 왜 `holder`를 기록하나?\|Q5-2]] | Lock vs 세마포어 | 🔺 부분 정답 |
 | [[#Q5-3. 세마포어로 신호 보내기\|Q5-3]] | 세마포어 신호 | ❌ 오답 |
+| [[#Q5-4. 신호를 먼저 보내면?\|Q5-4]] | 세마포어 신호 | 🔺 절반 정답 |
 
 ### ❌ 틀린 것 / 모른 것 (복습 우선순위)
 - [ ] **PC는 스레드마다 따로** 가진다 (공유한다고 답함) → [[#Q1. 스레드가 공유하는 것 vs 따로 갖는 것|Q1]]
@@ -40,6 +41,7 @@ progress: 5 / 10 (보충 문제 포함)
 - [ ] `holder`가 없으면 남이 열쇠를 반납해서 **두 스레드가 동시에 임계 구역에 들어가고 race condition이 다시 생긴다** → [[#Q5-2. Lock은 왜 `holder`를 기록하나?|Q5-2]]
 - [ ] value 0인 세마포어에 `sema_down` → **RUNNING → BLOCKED** (타이머 인터럽트 → READY라고 답함) → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
 - [ ] `sema_up`으로 깨어나면 **BLOCKED → READY** (READY → RUNNING이라고 답함) → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
+- [ ] 열쇠가 있으면 `sema_down`은 **기다리지 않고 통과** → RUNNING 그대로. DYING은 `thread_exit()`일 때만 (DYING이라고 답함) → [[#Q5-4. 신호를 먼저 보내면?|Q5-4]]
 - [ ] 신호 보내기에 lock을 못 쓰는 이유: **down/up 스레드가 다름 + lock은 열린 채로 시작** → [[#Q5-3. 세마포어로 신호 보내기|Q5-3]]
 
 ### ✅ 맞은 것
@@ -50,6 +52,7 @@ progress: 5 / 10 (보충 문제 포함)
 - 중간에 끼어들면 더하기 하나가 사라진다 (10 → 11, 원래 12) — Q4-2
 - 스케줄러는 `ready_list`에서만 고른다. BLOCKED 스레드는 선택되지 않는다 — Q5-1
 - `holder`가 없으면 누구든 lock을 release할 수 있다 — Q5-2
+- B가 먼저 `sema_up` 하면 value는 1 — Q5-4
 
 ---
 
@@ -465,10 +468,36 @@ mov  [count], eax   ; ③ 쓰기: 레지스터 → 메모리
 > - `sema_down`/`lock_acquire`에서 못 들어가면 **스스로** BLOCKED.
 > - 깨어나면(`sema_up`, `lock_release`) **항상 READY 먼저.** BLOCKED → RUNNING 직행은 없다.
 
+### Q5-4. 신호를 먼저 보내면?
+
+> [!question] 문제
+> `sema_init(&done, 0)`. B가 먼저 ⓑ `sema_up` → 그 뒤 A가 ⓐ `sema_down`에 도착.
+> (a) B가 up 한 뒤 value는? (b) A는 BLOCKED가 되나, RUNNING 그대로인가?
+
+> [!quote] 내 답
+> a: 1 / b: A는 이미 끝난 상태라 DYING인가?
+
+> [!failure] 결과: 🔺 절반 정답 ((a) ✅, (b) ❌)
+
+> [!success] 정답
+> - (a) **1** ✅
+> - (b) **RUNNING 그대로.** `sema_down()`이 value 1을 보고 0으로 줄인 뒤 **기다리지 않고 통과**한다. A는 이어서 `use_result()`를 실행한다.
+
+> [!warning] 왜 DYING이 아닌가
+> - 끝난 건 **B의 파일 읽기**지 **A가 아니다.** A는 아직 `use_result()`가 남았다.
+> - DYING은 스레드가 `thread_exit()`을 부를 때만 된다. 함수 하나(`sema_down`)를 통과한 건 스레드의 끝이 아니다.
+
+> [!tip] 세마포어는 신호를 "기억"한다
+> | 순서 | value 변화 | A 상태 |
+> |---|---|---|
+> | A 먼저 down → B가 up (Q5-3) | 0 → (A 대기) → up이 A 깨움 | RUNNING → **BLOCKED** → READY → RUNNING |
+> | B 먼저 up → A가 down (Q5-4) | 0 → **1** → 0 | **RUNNING 그대로** |
+> 어느 순서든 **A는 B가 끝난 뒤에 `use_result()`를 실행한다.** 먼저 온 신호는 value에 저장되어 있다가 나중에 온 A가 꺼내 간다.
+
 ---
 
 ## 📝 아직 안 푼 문제
-- [ ] Q5-4. 세마포어 신호를 먼저 보내면? (B가 먼저 up)
+- [ ] Q5-6. 상태 판단 연습 (스피드 퀴즈)
 - [ ] Q5-5. Condition Variable
 - [ ] Q6. `cond_wait()`을 `if`가 아니라 `while`로 감싸는 이유
 - [ ] Q7. Alarm Clock: busy waiting 문제와 sleep list
