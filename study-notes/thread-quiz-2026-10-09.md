@@ -22,6 +22,8 @@ progress: 3 / 10
 - [ ] `thread_yield()`는 **RUNNING → READY** (READY → RUNNING이라고 답함) → [[#Q3. 스레드 상태 전이|Q3]]
 - [ ] time slice 종료는 **RUNNING → READY** (DYING이라고 답함) → [[#Q3. 스레드 상태 전이|Q3]]
 - [ ] 네 가지 상태의 뜻 설명 (답하지 않음) → [[#Q3. 스레드 상태 전이|Q3]]
+- [ ] **READY → BLOCKED 전이는 없다.** 코드를 실행할 수 있는 건 RUNNING뿐이다 (yield가 READY → BLOCKED라고 생각함) → [[#추가 질문 ① yield는 왜 READY → BLOCKED가 아니라 RUNNING → READY인가?|Q3 추가 ①]]
+- [ ] **타이머 인터럽트는 "작업 끝" 알림이 아니라 강제로 CPU를 뺏는 주기적 신호**다 (끝났다는 신호로 생각함) → [[#추가 질문 ② 타이머 인터럽트는 "작업이 끝났다"는 신호인가?|Q3 추가 ②]]
 
 ### ✅ 맞은 것
 - 코드, 데이터는 공유 / 스택, 레지스터는 따로
@@ -157,6 +159,46 @@ stateDiagram-v2
 
 > [!tip] 기억법
 > **BLOCKED에서 바로 RUNNING으로 가는 화살표는 없다.** 깨어나도 READY 줄에 먼저 서야 한다.
+
+### 추가 질문 ① yield는 왜 READY → BLOCKED가 아니라 RUNNING → READY인가?
+> [!warning] 내가 헷갈린 부분
+> "양보하니까 READY에서 BLOCKED로 가야 하지 않나?"라고 생각했다.
+
+- **코드를 실행할 수 있는 건 RUNNING 스레드 하나뿐이다.** READY 스레드는 줄에 서 있을 뿐 아무 코드도 실행하지 못한다. 그래서 `thread_yield()`든 `sema_down()`이든 **함수를 호출한 스레드는 반드시 RUNNING**이다.
+- 그래서 **READY → BLOCKED 화살표는 존재하지 않는다.** BLOCKED가 되려면 `sema_down()` 같은 함수를 직접 불러야 하는데, READY 스레드는 함수를 부를 수 없다.
+- yield한 스레드는 **기다리는 사건이 없다.** 할 일이 남았고 CPU만 다시 받으면 바로 이어서 할 수 있다. 이게 READY의 정의다.
+
+| | yield (→ READY) | sema_down 대기 (→ BLOCKED) |
+|---|---|---|
+| 왜 CPU를 놓나 | 남에게 차례를 양보 | 필요한 자원이 없어서 |
+| 다시 CPU를 받으면 | 바로 실행 가능 | 아직 못 돈다 (자원이 없으니까) |
+| 누가 깨워 주나 | 필요 없음, 스케줄러가 고르면 실행 | 다른 스레드가 `sema_up()` 해 줘야 함 |
+
+> [!tip] 비유: 화장실 줄
+> - RUNNING = 화장실 안에 있는 사람
+> - READY = 줄 서 있는 사람
+> - yield = 볼일이 남았지만 뒷사람에게 양보하고 **다시 줄 맨 뒤로** 감 → READY
+> - BLOCKED = 휴지가 없어서 **휴지가 올 때까지** 대기실에 감. 차례가 와도 들어갈 수 없다
+> - 줄에 서 있는 사람(READY)은 대기실(BLOCKED)로 갈 이유도 방법도 없다
+
+### 추가 질문 ② 타이머 인터럽트는 "작업이 끝났다"는 신호인가?
+> [!warning] 오해
+> "READY 쪽에서 RUNNING의 작업이 끝났는지 모르니, 끝났다고 알려 주는 신호가 타이머 인터럽트다"라고 생각했다.
+
+> [!success] 정답
+> 타이머 인터럽트는 **작업이 끝났든 말든 일정 시간마다 하드웨어가 무조건 보내는 신호**다. 목적은 **아직 안 끝난 스레드에게서도 CPU를 강제로 빼앗는 것(선점, preemption)**이다.
+
+- **작업이 끝난 경우:** 스레드가 스스로 `thread_exit()`을 불러 DYING이 되고, 그 안에서 다음 스레드를 스케줄한다. 알림이 필요 없다.
+- **작업이 안 끝난 경우:** 스레드가 무한 루프를 돌면 영원히 CPU를 안 내놓는다. 그래서 하드웨어 시계가 끼어들어 강제로 뺏는다.
+- **READY 스레드는 아무것도 확인하지 못한다.** 실행 중이 아니니까. 확인과 결정은 타이머 인터럽트 핸들러(커널 코드)가 **현재 RUNNING 스레드의 CPU를 빌려서** 한다.
+
+> [!example] Pintos 코드
+> - `include/devices/timer.h`: `#define TIMER_FREQ 100` → 1초에 100번 = **10ms마다** 인터럽트
+> - `devices/timer.c`의 `timer_interrupt()`: `ticks++; thread_tick();`
+> - `threads/thread.c`의 `thread_tick()`: 4 tick(=40ms) 지나면 `intr_yield_on_return()` → 인터럽트가 끝날 때 `thread_yield()` → RUNNING → READY
+
+> [!tip] 비유: PC방 타이머
+> 타이머 인터럽트는 "게임 끝났어요?"라고 묻는 게 아니라, **게임 중이든 아니든 40분마다 자리를 바꾸게 하는 알람**이다.
 
 ---
 
